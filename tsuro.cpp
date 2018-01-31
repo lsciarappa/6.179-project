@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <exception>
 #include <functional>
 #include <iostream>
@@ -32,6 +33,7 @@ public:
   }
   Tile() : s("--------") {}
   Tile(int n);
+  Tile(const Tile& t): s(t.s) {}
   Tile(std::string str) : s(str) {}
   std::string raw() const;
   bool valid() const;
@@ -56,6 +58,7 @@ private:
   std::array<Tile,6> hand;
 public:
   Game();
+  Game(const Game& other);
   Tile gridAt(int x, int y) const;
   bool toMove() const;
   Tile inHand(int index) const;
@@ -66,10 +69,28 @@ public:
   void advance();
   void play(int index, int nrotates);
   void draw();
+  std::vector<Game> & children();
   double heuristic() const;
   friend std::ostream &operator<<(std::ostream &os, const Game &g);
-  friend bool operator==(const Game &g1, const Game &g2);
+  friend bool operator==(const Game &g1, const Game &g2);  
 };
+
+Game::Game(const Game & other){
+  player1turn = other.player1turn;
+  for(int i = 0; i < 6; i++){
+    hand[i] = Tile(other.hand[i]);
+  }
+  for(int i = 0; i < 2; i++){
+    markers[i].x = other.markers[i].x;
+    markers[i].y = other.markers[i].y;
+    markers[i].w = other.markers[i].w;
+  }
+  for(int i = 0; i < grid_size; i++){
+    for(int j = 0; j < grid_size; j++){
+      grid[i][j] = Tile(other.grid[i][j]);
+    }
+  }
+}
 
 Tile::Tile(int n){
   if(n>=6) throw std::domain_error("Tiles have at most ten ways"); // In the real game n = 4, so we use single-digit numbers only.
@@ -488,34 +509,116 @@ struct gamehasher{
   }
 };
 
-double min_max(std::unordered_map<Game, double, gamehasher> & memo, Game & node, int depth,
-		  double alpha, double beta, bool maximize){
-  node.canonize();
-  if(memo.count(node)){//if value has already been computed
-    return memo[node];
+std::vector<Game> & Game::children(){
+  std::vector<Game> * out = new std::vector<Game>;
+  for(int index = 0; index < 3; index++){
+    if(!inHand(index,player1turn).empty()){
+      for(int nrotates = 0; nrotates < 4; nrotates++){
+	Game child = Game(*this);
+	child.play(index, nrotates);
+	out->push_back(child);
+      }
+    }
   }
-  if(depth == 0){
+  return *out;
+}
+
+double min_max(std::unordered_map<Game, double, gamehasher> & memo, Game & node, int depth){
+  //  std::cout << depth;
+  node.canonize();
+  // if(memo.count(node)){//if value has already been computed
+  //   std::cout << "already" << memo.count(node) << std::endl;
+  //   return memo[node];
+  // }
+  if(depth > 2){//hack-y...
+    memo[node] = node.heuristic();
     return node.heuristic();
+  }
+
+  
+  std::vector<Game> children = node.children();
+  if(children.size() == 0){
+    memo[node] = node.heuristic();
+    return node.heuristic();
+  }
+  for(auto child : children){
+    min_max(memo, child,depth+1);
+  }
+  if(node.toMove()){ // minimize
+    double out = std::numeric_limits<double>::infinity();
+    for(auto child : children){
+      if(memo[child] < out) out = memo[child];
+    }
+    memo[node] = out;
+    return out;
+  } else { //maximize
+    double out = -1 * std::numeric_limits<double>::infinity();
+    for(auto child : children){
+      if(memo[child] > out) out = memo[child];
+    }
+    memo[node] = out;
+    return out;
   }
 }
 
 int main(){
-  Game game;
-  std::unordered_map<Game, double, gamehasher> tree = std::unordered_map<Game,double, gamehasher>();
-  while (!game.hasLost(false) && !game.hasLost(true)){
+  int nhumans;
+  std::cin >> nhumans;
+  if(nhumans == 2){
+    Game game;
+    while (!game.hasLost(false) && !game.hasLost(true)){
+      std::cout << pretty(game) << std::endl;
+      int index, turns;
+      scanf("%d %d", &index, &turns);
+      game.play(index, turns);
+      game.draw();
+    }
     std::cout << pretty(game) << std::endl;
-    int index, turns;
-    scanf("%d %d", &index, &turns);
-    game.play(index, turns);
-    game.draw();
+    if(game.hasLost(false)){
+      std::cout << "Player 0 lost!" << std::endl;
+    }
+    if(game.hasLost(true)){
+      std::cout << "Player 1 lost!" << std::endl;
+    }
+  } else {
+    std::cout << "vs. computer" << std::endl;
+    Game game;
+    std::unordered_map<Game, double, gamehasher> tree = std::unordered_map<Game,double, gamehasher>();
+    while (!game.hasLost(false) && !game.hasLost(true)){
+      std::cout << pretty(game) << std::endl;
+      min_max(tree, game,0);
+      std::cout << "done" << std::endl;
+      for(int index = 0; index < 3; index++){
+	for(int nrotates = 0; nrotates < 4; nrotates++){
+	  Game child = Game(game);
+	  child.play(index, nrotates);
+	  std::cout<<"tree access"<<std::endl;
+	  if(tree[child] == tree[game]){
+	    game.play(index, nrotates);
+	    goto human_turn;
+	  }
+	}
+      }
+      std::cout << "error: no move selected" << std::endl;
+    human_turn:
+      if (game.hasLost(false) || game.hasLost(true)){
+	goto end;
+      }
+      
+      game.draw();
+      std::cout << pretty(game) << std::endl;      
+      int index, turns;
+      scanf("%d %d", &index, &turns);
+      game.play(index, turns);
+      game.draw();
+    }
+  end: std::cout << pretty(game) << std::endl;
+    if(game.hasLost(false)){
+      std::cout << "Player 0 lost!" << std::endl;
+    }
+    if(game.hasLost(true)){
+      std::cout << "Player 1 lost!" << std::endl;
+    }
   }
-  std::cout << game;
-  if(game.hasLost(false)){
-    std::cout << "Player 0 lost!" << std::endl;
-  }
-  if(game.hasLost(true)){
-    std::cout << "Player 1 lost!" << std::endl;
-  }
-
   return 0;
 }
