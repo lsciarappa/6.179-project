@@ -511,6 +511,9 @@ struct gamehasher{
 
 std::vector<Game> & Game::children(){
   std::vector<Game> * out = new std::vector<Game>;
+  if (this->hasLost(false) || this->hasLost(true)){
+    return *out;
+  }
   for(int index = 0; index < 3; index++){
     if(!inHand(index,player1turn).empty()){
       for(int nrotates = 0; nrotates < 4; nrotates++){
